@@ -53,30 +53,6 @@
 
     <script>
 
-// 画面消灯を禁止するオブジェクトを保持する変数（コードの上のほうに追記）
-let wakeLock = null;
-
-// 【関数】画面消灯禁止をリクエストする（どこに書いてもOKです）
-async function requestWakeLock() {
-    if ('wakeLock' in navigator) {
-        try {
-            // すでに有効なら多重リクエストを避ける
-            if (wakeLock !== null) return; 
-
-            wakeLock = await navigator.wakeLock.request('screen');
-            console.log("【デバッグ】画面消灯禁止（Wake Lock）が有効になりました。");
-            
-            wakeLock.addEventListener('release', () => {
-                console.log("【デバッグ】画面消灯禁止が解除されました。");
-                wakeLock = null; // 解除されたら変数をリセット
-            });
-        } catch (err) {
-            console.error(`【エラー】画面消灯禁止に失敗: ${err.name}, ${err.message}`);
-        }
-    } else {
-        console.log("【エラー】お使いのブラウザはWake Lockに対応していません。");
-    }
-}
 
 // 画面のどこかを触った瞬間に動作するイベント（既存のコードにWake Lockを追加）
 let globalAudioCtx = null;
