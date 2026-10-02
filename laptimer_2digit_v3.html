@@ -56,6 +56,65 @@
 
 let globalAudioCtx = null;
 let isUnlocked = false;
+// ★画面消灯禁止オブジェクトを保持する変数を追加
+let wakeLock = null;
+
+// ★【追加】画面消灯禁止をリクエストする非同期関数
+async function requestWakeLock() {
+    if ('wakeLock' in navigator) {
+        try {
+            // すでに有効なら多重にリクエストしない
+            if (wakeLock !== null) return; 
+
+            wakeLock = await navigator.wakeLock.request('screen');
+            console.log("【デバッグ】画面消灯禁止（Wake Lock）が有効になりました。");
+            
+            wakeLock.addEventListener('release', () => {
+                console.log("【デバッグ】画面消灯禁止が解除されました。");
+                wakeLock = null; 
+            });
+        } catch (err) {
+            console.error(`【エラー】画面消灯禁止に失敗: ${err.name}, ${err.message}`);
+        }
+    } else {
+        console.log("【エラー】お使いのブラウザはWake Lockに対応していません。");
+    }
+}
+
+// 画面のどこかを触った瞬間に動作するイベント
+// ★非同期関数（requestWakeLock）を内部で呼ぶため、イベントの先頭に「async」を追加しています
+window.addEventListener('click', async () => {
+    
+    // ★【最優先】画面消灯禁止をリクエスト（クリックされた瞬間に実行）
+    await requestWakeLock();
+
+    if (isUnlocked) return; 
+
+    // 音声機能のロック解除
+    try {
+        globalAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        isUnlocked = true;
+        console.log("音声ロックが解除されました。これ以降の自動警告音が有効です。");
+    } catch (audioErr) {
+        console.error(audioErr);
+    }
+
+    // 案内メッセージを即座に消去
+    try {
+        const welcomeMsg = document.getElementById('welcomeMessage');
+        if (welcomeMsg) welcomeMsg.remove();
+    } catch (msgErr) {
+        console.error(msgErr);
+    }
+}, { capture: true });
+
+// ★【追加】アプリが裏画面から戻ってきたときに自動で画面消灯禁止を復活させる処理
+document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible') {
+        await requestWakeLock();
+    }
+});
+
 
 // speak 関数
 function speak(text) {
