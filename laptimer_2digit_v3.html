@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LapTimer_2digit</title>
+    <style>
+        /* 画面全体の要素を強制的に中央に寄せる設定（!important）を追加 */
+        body { font-family: sans-serif !important; text-align: center !important; background: #f0f0f0 !important; padding: 15px !important; margin: 0 !important; }
+        h1 { font-size: 24px; margin: 10px 0; white-space: nowrap; display: block; text-align: center; }
+        button { padding: 12px 18px; font-size: 15px; font-weight: bold; background: #007bff; color: white; border: none; border-radius: 5px; margin: 5px 3px; cursor: pointer; display: inline-block; }
+        button:active { background: #0056b3; }
+        #clearBtn { background: #dc3545; }
+        #clearBtn:active { background: #bd2130; }
+        #csvBtn { background: #28a745; }
+        #csvBtn:active { background: #218838; }
+        .time-display { font-size: 54px; font-weight: bold; color: #222; margin: 15px 0; text-align: center; }
+        table { width: 100%; max-width: 500px; margin: 15px auto; border-collapse: collapse; background: white; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        th, td { padding: 10px 5px; border-bottom: 1px solid #ddd; text-align: center; font-size: 15px; white-space: nowrap; }
+        th { background: #333; color: white; }
+
+
+        /* 案内メッセージ専用のスタイル（他の要素を絶対に左寄せにしない） */
+        #welcomeMessage {
+            font-size: 12px;
+            font-weight: bold;
+	　　/*color: #d9534f; */
+            color: #0;
+            background: #fff3cd;
+            border: 1px solid #ffeeba;
+            border-radius: 5px;
+            padding: 12px;
+            margin: 10px auto 20px auto; /* 下側に余裕を持たせる */
+            max-width: 500px;
+            width: 90%;
+            text-align: center; /* メッセージ自体も中央配置 */
+            box-sizing: border-box;
+        }
+    </style>
+</head>
+<body>
+
+<!-- 💡 HTMLの <body> のすぐ直後に貼り付けてください -->
+<!-- 外枠を無色にし、最初は中身を完全に空っぽ（非表示）にしておきます -->
+<div id="force-wakelock-area" style="position: relative; z-index: 999999; background: transparent; padding: 10px; margin: 5px; text-align: center;">
+    <div id="forceWakeLockStatus" style="font-size: 12px; font-weight: bold; color: #000000;"></div>
+</div>
+
+<script>
+(function() {
+    let testLock = null;
+    const sts = document.getElementById("forceWakeLockStatus");
+
+    if(!sts) return;
+
+    // 画面のどこかを1回でもタッチ（クリック）した瞬間に動作するイベント
+    window.addEventListener('click', async () => {
+        // すでに有効化されている場合は、2回目以降のタッチでは何もしない
+        if (testLock !== null) return;
+
+        if ('wakeLock' in navigator) {
+            try {
+                // 画面消灯禁止を最優先でリクエスト
+                testLock = await navigator.wakeLock.request('screen');
+                
+                // ★タッチ操作後、ご希望の「黒字の表示のみ」を画面に浮かび上がらせます
+                sts.textContent = "WakeLock：有効（https://...）";
+                
+                // 解除された場合の保険イベント
+                testLock.addEventListener('release', () => {
+                    sts.textContent = ""; // 解除されたら文字を消す
+                    testLock = null;
+                });
+            } catch (err) {
+                //console.error("Wake Lock 起動失敗:", err.message);
+		sts.textContent = "WakeLock：無効（content://...）";
+            }
+        } else {
+            //console.error("ブラウザが非対応、または非HTTPS環境です。");
+	　　sts.textContent = "WakeLock：無効（content://...）";
+
+        }
+    }, { capture: true }); // 他のボタンなどのイベントより最優先でキャッチする設定
+})();
+</script>
+<!-- 💡 貼り付けはここまで。この下に既存のHTMLが続きます -->
+
+
+    <!-- 起動時の案内メッセージ -->
+    <div id="welcomeMessage">⚠️ 「M5Atomと接続する」ボタンを押してください。</div>
+
+    <h1>LapTimer_2digit</h1> 
+    <button id="connectBtn">M5Atomと接続する</button>
+    <button id="clearBtn">履歴を削除</button>
+    <button id="csvBtn">.csv</button>
+    <div class="time-display" id="lastLapTime">--.---</div>
+
+    <table>
+        <thead><tr><th>Lap</th><th>Time</th><th>Ave.</th><th>Sum.</th></tr></thead>
+        <tbody id="logTable"></tbody>
+    </table>
+
+    <script>
+
+// 画面のどこかを触った瞬間に動作するイベント
+let globalAudioCtx = null;
+let isUnlocked = false;
+
+window.addEventListener('click', async () => {
+    
+    // -----------------------------------------------------------------
+    // 【対策】画面消灯禁止のリクエストを完全に独立させ、最優先で実行します。
+    // 万が一、下の音声処理などがエラーを起こしても、ここは確実に実行されます。
+    // -----------------------------------------------------------------
+    await requestWakeLock();
+
+    // 2回目以降のタップでは、以下の音声・メッセージ処理をスキップ
+    if (isUnlocked) return; 
+
+    // 音声機能のロック解除（個別にtry-catchで囲み、エラーを外に漏らさない）
+    try {
+        globalAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        isUnlocked = true;
+        console.log("音声ロックが解除されました。これ以降の自動警告音が有効です。");
+    } catch (audioErr) {
+        console.error("【音声エラー発生】ですが消灯禁止処理には影響しません:", audioErr);
+    }
+
+    // 案内メッセージを即座に消去（個別にtry-catchで囲む）
+    try {
+        const welcomeMsg = document.getElementById('welcomeMessage');
+        if (welcomeMsg) {
+            welcomeMsg.remove();
+        }
+    } catch (msgErr) {
+        console.error("【メッセージ削除エラー発生】ですが消灯禁止処理には影響しません:", msgErr);
+    }
+}, { capture: true });
+
+// アプリが裏画面から戻ってきたときに自動で画面消灯禁止を復活させる処理
+document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible') {
+        await requestWakeLock();
+    }
+});
+
+
+// speak 関数
+function speak(text) {
+    const uttr = new SpeechSynthesisUtterance(text);
+    uttr.lang = 'ja-JP';
+    window.speechSynthesis.speak(uttr);
+	
+    //const utterance = new SpeechSynthesisUtterance(text); 
+    //utterance.volume = 0.5; //0～1　★スマホ本体の設定音量が最大
+    //utterance.rate = 2;  // アナウンスの速さ：0.1 〜 10.0 (デフォルト 1.0)
+    //utterance.pitch = 1.0; // 音程：0.0 〜 2.0 (デフォルト 1.0)
+    //speechSynthesis.speak(utterance);
+}
+
+
+// 警告音1を鳴らしてアナウンスする関数
+function speak_alert1(alertnumber) {
+
+    if (!isUnlocked || !globalAudioCtx) {
+        speak(text);
+        return;
+    }
+
+    try {
+        if (globalAudioCtx.state === 'suspended') {
+            globalAudioCtx.resume();
+        }
+
+//------------
+	const now = globalAudioCtx.currentTime;
+	const volume=1.0;//ボリューム
+        const duration = 0.2;//音の長さ
+	const mutetime = 0.1;//消音時間
+	 
+
+        // 1回目の「ピ」
+        const osc1 = globalAudioCtx.createOscillator();
+        const gain1 = globalAudioCtx.createGain();
+        osc1.connect(gain1); gain1.connect(globalAudioCtx.destination);
+        osc1.type = 'sine'; osc1.frequency.value = 880;//880Hzは「ラ」の音程
+        osc1.start(now);
+        gain1.gain.setValueAtTime(volume, now);
+        gain1.gain.exponentialRampToValueAtTime(volume, now + duration);//終了時の音の強さ
+        osc1.stop(now + duration);
+
+        // 2回目の「ピ」
+        const osc2 = globalAudioCtx.createOscillator();
+        const gain2 = globalAudioCtx.createGain();
+        osc2.connect(gain2); gain2.connect(globalAudioCtx.destination);
+        osc2.type = 'sine'; osc2.frequency.value = 1244;//0.5オクターブ上
+        const start2 = now + duration + mutetime;
+        const end2 = start2 + duration;
+        osc2.start(start2);
+        gain2.gain.setValueAtTime(volume, start2);
+        gain2.gain.exponentialRampToValueAtTime(volume, end2);//終了時の音の強さ
+        osc2.stop(end2);
+
+        // 3回目の「ピ」
+        const osc3 = globalAudioCtx.createOscillator();
+        const gain3 = globalAudioCtx.createGain();
+        osc3.connect(gain3); gain3.connect(globalAudioCtx.destination);
+        osc3.type = 'sine'; osc3.frequency.value = 1760;//
+        const start3 = now + (duration + mutetime) * 2;
+        const end3 = start3 + duration;
+        osc3.start(start3);
+        gain3.gain.setValueAtTime(volume, start3);
+        gain3.gain.exponentialRampToValueAtTime(volume, end3);//終了時の音の強さ
+        osc3.stop(end3);
+
+//-----------
+
+    } catch (e) {
+        console.error("警告音の生成に失敗しました:", e);
+    }
+
+	//警告条件1のアナウンス	
+	let numtext = ""; // 代入する変数をあらかじめ宣言	
+	switch (alertnumber) {
+  		case 1:numtext="いっかいめ";break;
+  		case 2:numtext="にかいめ";break;
+  		case 3:numtext="さんかいめ";break;
+　		case 4:numtext="よんかいめ";break;
+  		case 5:numtext="ごかいめ";break;
+  		case 6:numtext="ろくかいめ";break;
+  		case 7:numtext="ななかいめ";break;
+  		case 8:numtext="はちかいめ";break;
+  		case 9:numtext="きゅうかいめ";break;
+  		case 10:numtext="じゅっかいめ";break;
+
+  		default:numtext = String(alertnumber) + "かいめ";break;//String()の最初大文字が必須
+
+	}
+	
+	text="のトラックリミットオーバー";
+	text=numtext+text;
+
+	//警告音が鳴り終わってからアナウンスする。
+    	setTimeout(() => {
+		speak(text);
+    	}, 1800);
+}
+
+// 警告音2を鳴らしてアナウンスする関数
+function speak_alert2() {
+    if (!isUnlocked || !globalAudioCtx) {
+        speak(utterance);
+        return;
+    }
+
+    try {
+        if (globalAudioCtx.state === 'suspended') {
+            globalAudioCtx.resume();
+        }
+
+	//-----------
+	const now = globalAudioCtx.currentTime;
+	const volume = 2.0;      // ボリューム
+	const duration = 0.5;    // 音の長さ
+	const mutetime = 0.1;    // 消音時間
+	const interval = duration + mutetime; // 1回あたりの合計時間（0.5 + 0.1 = 0.6秒）
+
+	//警告音を3回発生される
+	for (let i = 0; i < 5; i++) {
+  
+		const startTime = now + (i * interval);//開始時間を 0秒後、0.6秒後、1.2秒後 にずらす
+		const stopTime = startTime + duration;
+
+		const osc1 = globalAudioCtx.createOscillator();
+		const gain1 = globalAudioCtx.createGain();
+  
+		osc1.connect(gain1); 
+		gain1.connect(globalAudioCtx.destination);
+		osc1.type = 'sine'; 
+  
+		osc1.frequency.setValueAtTime(440, startTime);// 開始時の周波数を 440Hz に設定
+		osc1.frequency.exponentialRampToValueAtTime(1760, stopTime);//0.5秒かけて 1760Hz まで変化させる
+
+		// ボリュームの制御（タイミングをずらしたstartTimeを基準にする）
+		gain1.gain.setValueAtTime(volume, startTime);
+		gain1.gain.exponentialRampToValueAtTime(volume, stopTime);
+
+		// 指定した時間でスタートとストップ
+		osc1.start(startTime);
+		osc1.stop(stopTime);
+	}
+	//-----------   
+
+    } catch (e) {
+        console.error("警告音の生成に失敗しました:", e);
+    }
+
+    //アナウンス内容
+    //text="あぶない行為は、やめてください。";
+
+　　//警告音が鳴り終わってからアナウンスする。
+    //setTimeout(() => {
+    //    speak(text);
+    //}, 1800);
+}
+
+//----------
+        const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+        const CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+
+        let startTime = 0, lastTime = 0, lapCount = 0, wakeLock = null, announcementTimer = null, lapDurations = [], nextAnnounceMin = 2;
+        let myCharacteristic = null, batAdcValues = [], isMeasuringBattery = false;
+
+        window.onload = () => { displayLogs(); };
+
+        async function requestWakeLock() {
+            try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (err) {}
+        }
+        document.addEventListener('visibilitychange', async () => {
+            if (wakeLock !== null && document.visibilityState === 'visible') await requestWakeLock();
+        });
+
+        document.getElementById('connectBtn').addEventListener('click', async () => {
+            try {
+                const device = await navigator.bluetooth.requestDevice({ filters: [{ name: 'M5Atom_LapTimer' }], optionalServices: [SERVICE_UUID] });
+                const server = await device.gatt.connect();
+                const service = await server.getPrimaryService(SERVICE_UUID);
+                myCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+                
+                await myCharacteristic.startNotifications();
+                myCharacteristic.addEventListener('characteristicvaluechanged', handleData);
+                await requestWakeLock();
+                
+                batAdcValues = [];
+                isMeasuringBattery = true;
+                
+                for (let i = 0; i < 5; i++) {
+                    await new Promise(resolve => setTimeout(resolve, 20));
+                    const encoder = new TextEncoder();
+                    await myCharacteristic.writeValue(encoder.encode("BAT"));
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 50));
+                isMeasuringBattery = false;
+
+                let finalVoltageText = "#.##v";
+                if (batAdcValues.length > 0) {
+                    const sumAdc = batAdcValues.reduce((a, b) => a + b, 0);
+                    const avgAdc = sumAdc / batAdcValues.length;
+                    
+                    // 校正データ適用時の正規係数 3.10 を使用
+                    let calculatedVoltage = (avgAdc / 4095) * 3.10 * 2;
+                    if (calculatedVoltage > 4.25) calculatedVoltage = 4.20; 
+                    finalVoltageText = calculatedVoltage.toFixed(2) + "v";
+                }
+
+                alert("M5Atomと接続しました！\nAtom_Liteの供給電圧は、" + finalVoltageText + "です。");
+                
+                const encoder = new TextEncoder();
+                await myCharacteristic.writeValue(encoder.encode("PREP"));
+
+                document.getElementById('connectBtn').innerText = "接続中（常時点灯有効）";
+                document.getElementById('connectBtn').disabled = true;
+            } catch (error) { alert("接続に失敗しました: " + error); isMeasuringBattery = false; }
+        });
+
+//トラックリミット違反回数の宣言
+let alertnumber1=0;
+
+ async function handleData(event) {
+            const now = performance.now();
+            let valueStr = new TextDecoder().decode(event.target.value);
+
+            // 1. 電圧データを受信した場合
+            if (valueStr.startsWith("V:")) {
+                let adcVal = parseInt(valueStr.substring(2));
+                if (!isNaN(adcVal) && isMeasuringBattery) {
+                    batAdcValues.push(adcVal);
+                }
+                return;
+            }
+
+            // 2. 最初のスイッチ操作信号を受信した場合（START）
+            if (valueStr === "START") {
+
+		//--------
+		alertnumber1 = 0 ;//トラックリミット違反回数のリセット
+		//--------
+
+                await requestWakeLock();
+                startTime = now;
+                lapCount = 1;
+                lapDurations = [];
+                nextAnnounceMin = 2;
+                speak("ラップタイム計測を開始しました");
+
+                if (announcementTimer) clearInterval(announcementTimer);
+                announcementTimer = setInterval(() => {
+                    const currentElapsedMin = (performance.now() - startTime) / 60000;
+                    if (currentElapsedMin >= nextAnnounceMin) {
+                        speak(nextAnnounceMin + "分経過");
+                        nextAnnounceMin += 2;
+                    }
+                }, 1000);
+                return;
+            }
+
+            // 3. 2回目以降のラップタイムデータ（マイクロ秒）を受信した場合
+            if (valueStr.startsWith("L:")) {
+                await requestWakeLock();
+                
+                // マイコンから届いた生のマイクロ秒（μs）を取得
+                const lapMicros = parseInt(valueStr.substring(2));
+                if (isNaN(lapMicros)) return;
+
+                // 1ms単位の端数を0〜9まで完全に活かすため、純粋に1000で割ってミリ秒にします
+                const lapDuration = lapMicros / 1000; //ラップタイムのms換算 
+                const totalDuration = now - startTime;
+                lapDurations.push(lapDuration);
+
+                // ① 画面表示用のTimeを「秒.ミリ秒3桁」に変換（3桁目が0〜9まで綺麗に表示されます）
+                const timeDisplay = (lapDuration / 1000).toFixed(2); //★少数点以下2桁
+
+                const lapMin = Math.floor(lapDuration / 60000);
+                const lapSec = Math.floor((lapDuration % 60000) / 1000);
+                
+                // 音声アナウンス用（これまで通り聞きやすさを重視し、10ms単位に四捨五入して母音拡張を適用）
+                const displayMsForVoice = Math.round((lapDuration % 1000) / 10) % 100;
+                const secText = (lapMin > 0 ? lapMin + "分" : "") + lapSec + "秒";
+                const msString = String(displayMsForVoice).padStart(2, '0');
+                let ch1 = msString.charAt(0);
+                let ch2 = msString.charAt(1);
+                if (ch1 === '2') ch1 = 'にい'; else if (ch1 === '5') ch1 = 'ごお';
+                if (ch2 === '2' || ch2 === '5') ch2 += '。';
+                const msText = ch1 + "、" + ch2;
+                const timeText = secText + "、" + msText;
+
+                // ② 直近5周平均の計算（小数点以下3桁「#.###」に正確に反映）
+                let avgDisplay = "--";
+		//ラップカウントが5以上で通常条件の場合に計算をする
+		if(lapCount>=5 && lapDuration >20){                     
+		    //「10」と「20」を除いた有効なラップタイムだけの配列を作成する
+		    const filteredLaps = lapDurations.filter(lap => lap !== 10 && lap !== 20);//filteredLaps配列はその都度、空にする必要はない。
+		    const last5Laps = filteredLaps.slice(-5);
+                    const sum = last5Laps.reduce((a, b) => a + b, 0);
+                    avgDisplay = (sum / 5 / 1000).toFixed(2); //★少数点以下2桁の表示			
+
+                }
+
+                // ③ 累積時間の整形（分.秒.ms2桁）
+                const roundedTotalMs = Math.round(totalDuration / 10) * 10;
+                const totalMin = Math.floor(roundedTotalMs / 60000);
+                const totalSec = Math.floor((roundedTotalMs % 60000) / 1000);
+                const totalMs = Math.floor((roundedTotalMs % 1000) / 10);
+                const totalDisplay = String(totalMin).padStart(2,'0') + "." + String(totalSec).padStart(2,'0') + "." + String(totalMs).padStart(2,'0');
+
+                document.getElementById('lastLapTime').innerText = timeDisplay;
+                //speak(lapCount + "周目、" + timeText);
+
+		//ラップタイムが20ms秒未満の場合は、警告条件の処理を加えます。
+		if(lapDuration <= 20){
+
+			if(lapDuration <=10){ //警告条件１は、ラップタイムが10ms
+				//トラックリミット違反の処理
+				alertnumber1=alertnumber1 + 1;//トラックリミット違反回数の更新	
+    				speak_alert1(alertnumber1);
+
+			}
+			else if(lapDuration <=20){//警告条件１は、ラップタイムが20ms
+				//危険警告の処理
+    				speak_alert2();
+			}
+
+		}
+		else {//通常条件		
+			speak(lapCount + "周目、" + timeText);
+	
+		}
+		
+		if(lapDuration >20){
+			//通常条件
+	                saveLog(lapCount, timeDisplay, avgDisplay, totalDisplay);
+              		lapCount++;//ラップカウント更新
+		}
+		else{
+			//警告条件
+	                saveLog(0, timeDisplay, avgDisplay, totalDisplay);//ラップ数は"0"を表示
+			//ラップは更新しません
+		}
+
+
+            }
+        }
+
+        function speak(text) {
+            const uttr = new SpeechSynthesisUtterance(text);
+            uttr.lang = 'ja-JP';
+            window.speechSynthesis.speak(uttr);
+        }
+
+        function saveLog(lap, time, avg, total) {
+            let logs = JSON.parse(localStorage.getItem('lapLogs')) || [];
+            logs.unshift({ lap, time, avg, total });
+            localStorage.setItem('lapLogs', JSON.stringify(logs));
+            displayLogs();
+        }
+
+        function displayLogs() {
+            let logs = JSON.parse(localStorage.getItem('lapLogs')) || [];
+            const tbody = document.getElementById('logTable');
+            tbody.innerHTML = "";
+            logs.forEach(log => {
+                const row = "<tr><td>" + log.lap + "</td><td>" + log.time + "</td><td>" + log.avg + "</td><td>" + log.total + "</td></tr>";
+                tbody.innerHTML += row;
+            });
+        }
+
+        // CSVダウンロード
+        document.getElementById('csvBtn').addEventListener('click', () => {
+            let logs = JSON.parse(localStorage.getItem('lapLogs')) || [];
+            if (logs.length === 0) { return alert("保存する履歴データがありません。"); }
+
+            let csvContent = "Lap,Time,Ave.,Sum.\n";
+            let csvRows = [...logs].reverse();
+            csvRows.forEach(log => { csvContent += log.lap + "," + log.time + "," + log.avg + "," + log.total + "\n"; });
+
+            const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: "text/csv;charset=utf-8;" });
+            const d = new Date();
+            const filename = String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0') + ".csv";
+
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
+
+        document.getElementById('clearBtn').addEventListener('click', async () => {
+            if (confirm("すべての履歴を削除しますか？")) {
+                localStorage.removeItem('lapLogs');
+                lapCount = 0; lapDurations = [];
+                document.getElementById('lastLapTime').innerText = "--.---";
+                displayLogs();
+                if (announcementTimer) clearInterval(announcementTimer);
+                
+                if (myCharacteristic) {
+                    const encoder = new TextEncoder();
+                    await myCharacteristic.writeValue(encoder.encode("PREP"));
+                }
+            }
+        });
+
+    </script>
+</body>
+</html>
+
