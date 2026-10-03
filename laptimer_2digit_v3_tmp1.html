@@ -363,9 +363,9 @@ function speak_alert2() {
             } catch (error) { alert("接続に失敗しました: " + error); isMeasuringBattery = false; }
         });
 
-//トラックリミット違反回数の宣言
-let alertnumber1=0;
-let laptime_sum =0;
+
+let alertnumber1=0;//トラックリミット違反回数の宣言
+let laptime_sum =0;//ラップタイム累積値の宣言
 
  async function handleData(event) {
             const now = performance.now();
@@ -385,7 +385,7 @@ let laptime_sum =0;
 
 		//--------
 		alertnumber1 = 0 ;//トラックリミット違反回数のリセット
-		laptime_sum= 0;
+		laptime_sum= 0;//ラップタイム累積値のリセット
 		//--------
 
                 await requestWakeLock();
