@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title id="app-title">LapTimer_IRpack</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #f0f0f0; margin: 0; padding: 10px; }
+        h1 { color: #333; margin: 5px 0; font-size: 24px; }
+        
+        /* 🔒 ポップアップ（モーダル）設定 */
+        .modal-overlay {
+            display: none; 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.5); z-index: 1000;
+            justify-content: center; align-items: center;
+        }
+        .config-box { 
+            background: white; padding: 20px; border-radius: 12px; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); width: 85%; max-width: 360px; 
+            max-height: 90vh; overflow-y: auto; 
+        }
+        
+        /* ポップアップ最上段のステータス表示領域 */
+        .modal-top-status {
+            display: flex; justify-content: center; gap: 8px; margin-bottom: 15px;
+            padding-bottom: 10px; border-bottom: 1px solid #eee;
+        }
+        .wakelock-mini, .voltage-mini {
+            font-size: 12px; font-weight: bold; padding: 4px 10px; border-radius: 15px; border: 1px solid #ccc;
+        }
+        .wl-active { background: #d4edda; color: #155724; border-color: #c3e6cb; }
+        .wl-inactive { background: #f8d7da; color: #721c24; border-color: #f5c6cb; }
+        .v-active { background: #e2f0fe; color: #004085; border-color: #b8daff; }
+
+        .btn { background: #007bff; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 5px; cursor: pointer; margin: 5px; }
+        .btn-danger { background: #dc3545; }
+        .btn-secondary { background: #6c757d; }
+        .btn-success { background: #28a745; width: 100%; margin: 10px 0; font-weight: bold; font-size: 18px; }
+        
+        /* ポップアップ最下段の独立機能ボタンエリア */
+        .modal-footer-btns { display: flex; justify-content: space-between; margin-top: 15px; padding-top: 10px; border-top: 1px solid #eee; }
+        .modal-footer-btns .btn { flex: 1; padding: 10px; font-size: 14px; font-weight: bold; }
+
+        .config-row { margin: 10px 0; text-align: left; display: flex; justify-content: space-between; align-items: center; }
+        select, input { padding: 6px; font-size: 15px; width: 110px; text-align: center; border: 1px solid #ccc; border-radius: 4px; }
+        label { font-size: 14px; font-weight: bold; color: #333; }
+        
+        /* 🏎️ メイン計測画面のレイアウト（34px固定） */
+        .time-display { font-size: 34px; font-weight: bold; font-family: monospace; margin: 15px 0; color: #111; letter-spacing: 0px; }
+        .stats-table { width: 100%; max-width: 400px; margin: 10px auto; border-collapse: collapse; background: white; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .stats-table th, .stats-table td { border: 1px solid #ddd; padding: 10px; text-align: center; font-size: 15px; }
+        .stats-table th { background: #f8f9fa; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <h1 id="display-title">LapTimer_IRpack</h1>
+    
+    <div style="margin: 10px 0;">
+        <button class="btn" id="btn-connect" onclick="connectBLE()">M5Atomと接続する</button>
+        <button class="btn         " id="btn-reconfig" style="background:#17a2b8; display:none;" onclick="showModal()">設定変更</button>
+    </div>
+
+    <div class="time-display" id="main-time">--.---</div>
+
+    <table class="stats-table">
+        <thead>
+            <tr><th>Lap</th><th>Time</th><th>Ave.</th><th>Sum.</th></tr>
+        </thead>
+        <tbody id="stats-body">
+            <!-- データ動的挿入 -->
+        </tbody>
+    </table>
+
+    <!-- 🛠️ ポップアップ（モーダル）設定画面エリア -->
+    <div class="modal-overlay" id="config-modal">
+        <div class="config-box">
+            
+            <!-- 最上行のWakeLockと電圧バッジ -->
+            <div class="modal-top-status">
+                <span id="wl-mini-status" class="wakelock-mini wl-inactive">🔒 スリープ防止：無効</span>
+                <span id="v-mini-status" class="voltage-mini">🔋 電圧: -- V</span>
+            </div>
+            
+            <!-- モード選択（💡 ご指定通り余計な文言を排除し、シンプルにモード1〜8に統合） -->
+            <div class="config-row">
+                <label for="set-mode">モード</label>
+                <select id="set-mode" onchange="updateAppLayout()">
+                    <option value="1" selected>モード1</option>
+                    <option value="2">モード2</option>
+                    <option value="3">モード3</option>
+                    <option value="4">モード4</option>
+                    <option value="5">モード5</option>
+                    <option value="6">モード6</option>
+                    <option value="7">モード7</option>
+                    <option value="8">モード8</option>
+                </select>
+            </div>
+            
+            <!-- 基本受信マスク設定項目 -->
+            <div class="config-row">
+                <label for="width-min">最小受信幅</label>
+                <input type="number" id="width-min" value="5">
+            </div>
+            
+            <div class="config-row">
+                <label for="width-max">最大受信幅</label>
+                <input type="number" id="width-max" value="45">
+            </div>
+
+            <!-- 先行設定スロット -->
+            <div class="config-row">
+                <label for="bias-pulse-width">バイアスパルス幅</label>
+                <input type="number" id="bias-pulse-width" value="38" min="1" max="100">
+            </div>
+            
+            <div class="config-row">
+                <label for="bit-slice-width">bitスライス幅</label>
+                <input type="number" id="bit-slice-width" value="20" min="1" max="100">
+            </div>
+            
+            <div class="config-row">
+                <label for="car-id-no">車体識別No.</label>
+                <select id="car-id-no">
+                    <option value="0" selected>1号車 (ID:0)</option>
+                    <option value="1">2号車 (ID:1)</option>
+                    <option value="2">3号車 (ID:2)</option>
+                    <option value="3">4号車 (ID:3)</option>
+                </select>
+            </div>
+            
+            <button class="btn btn-success" id="btn-set" onclick="sendConfig()">OK</button>
+            
+            <!-- 最下段の独立した履歴削除・CSVボタン -->
+            <div class="modal-footer-btns">
+                <button class="btn btn-danger" onclick="footerClearHistory()">履歴削除</button>
+                <button class="btn btn-secondary" onclick="footerExportCSV()">.csv</button>
+            </div>
+        </div>
+    </div>
+
+
+
+
+    <script>
+        const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+        const CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+
+        let bluetoothDevice = null;
+        let rxTxCharacteristic = null;
+        let lapTimes = [];
+        let isFirstData = true;
+        
+        // 🔒 各種制御用変数（WakeLock・2分間隔アナウンスタイマー）
+        let wakeLockToken = null;
+        let raceTimerId = null;
+        let raceElapsedSeconds = 0;
+
+        // ポップアップ（モーダル）を表示する関数
+        function showModal() {
+            document.getElementById("config-modal").style.display = "flex";
+        }
+
+        // ポップアップ（モーダル）を閉じる（消去する）関数
+        function hideModal() {
+            document.getElementById("config-modal").style.display = "none";
+        }
+
+        // 🔒 OSに画面スリープ禁止を要求し、ポップアップ最上段のインジケーターを動的更新する関数
+        async function activateWakeLock() {
+            const badge = document.getElementById("wl-mini-status");
+            if ('wakeLock' in navigator) {
+                try {
+                    if (wakeLockToken !== null) return;
+                    
+                    wakeLockToken = await navigator.wakeLock.request('screen');
+                    
+                    badge.innerText = "🟢 スリープ防止：有効";
+                    badge.className = "wakelock-mini wl-active";
+                    console.log("🟢 WakeLockが正常に有効化されました。");
+
+                    document.addEventListener('visibilitychange', async () => {
+                        if (wakeLockToken !== null && document.visibilityState === 'visible') {
+                            wakeLockToken = await navigator.wakeLock.request('screen');
+                            badge.innerText = "🟢 スリープ防止：有効";
+                            badge.className = "wakelock-mini wl-active";
+                        }
+                    });
+                } catch (err) {
+                    console.error(`❌ WakeLockエラー: ${err.message}`);
+                    badge.innerText = "🔴 スリープ防止：無効";
+                    badge.className = "wakelock-mini wl-inactive";
+                }
+            } else {
+                badge.innerText = "🔴 スリープ防止：非対応";
+                badge.className = "wakelock-mini wl-inactive";
+            }
+        }
+
+        // 🔋 起動時1回のみ：ATOM Liteへ電圧を問い合わせる関数
+        async function requestBatteryVoltage() {
+            if (!rxTxCharacteristic || !bluetoothDevice || !bluetoothDevice.gatt.connected) return;
+            try {
+                const encoder = new TextEncoder();
+                await rxTxCharacteristic.writeValue(encoder.encode("BAT"));
+                console.log("🔋 起動時の電圧問い合わせ(BAT)を送信しました");
+            } catch (error) {
+                console.error("❌ 電圧問い合わせ送信エラー:", error);
+            }
+        }
+
+        // 2分間隔で経過時間を音声案内するタイマー関数
+        function startRaceElapsedTimer() {
+            if (raceTimerId) {
+                clearInterval(raceTimerId);
+            }
+            raceElapsedSeconds = 0;
+
+            raceTimerId = setInterval(() => {
+                raceElapsedSeconds++;
+
+                if (raceElapsedSeconds % 120 === 0) {
+                    const elapsedMinutes = raceElapsedSeconds / 60;
+                    speak(`${elapsedMinutes}分経過しました`);
+                }
+            }, 1000);
+        }
+
+        // 💡 モード選択変更時にタイトルや表示桁数を動的に切り替える関数（モード4〜8空処理枠対応）
+        function updateAppLayout() {
+            const mode = document.getElementById("set-mode").value;
+            const appTitle = document.getElementById("app-title");
+            const displayTitle = document.getElementById("display-title");
+
+            // モード1、および将来の拡張モード4〜8を本番計測系（小数点以下3桁）として想定
+            if (mode === "1" || mode === "4" || mode === "5" || mode === "6" || mode === "7" || mode === "8") {
+                let suffix = (mode === "1") ? "" : ` (M${mode})`;
+                appTitle.innerText = `LapTimer_IRpack${suffix}`;
+                displayTitle.innerText = `LapTimer_IRpack${suffix}`;
+                document.getElementById("main-time").innerText = "--.---";
+            } else {
+                // モード2, 3は解析用（小数点以下6桁）
+                appTitle.innerText = `Capture_6digit (M${mode})`;
+                displayTitle.innerText = `Capture_6digit (M${mode})`;
+                document.getElementById("main-time").innerText = "--.------";
+            }
+            clearHistory();
+        }
+
+        // 音声アナウンス処理（モード2〜8での制限を拡張維持）
+        function speak(text) {
+            const mode = document.getElementById("set-mode").value;
+            
+            // モード1（本番）以外は、指定のアナウンスおよび経過時間案内以外をミュート
+            if (mode !== "1" && 
+                text !== "計測開始します" && 
+                text !== "計測を開始しました" && 
+                !text.includes("経過しました")) {
+                return; 
+            }
+            const uttr = new SpeechSynthesisUtterance(text);
+            uttr.lang = "ja-JP";
+            window.speechSynthesis.speak(uttr);
+        }
+
+        // Web Bluetooth 接続処理
+        async function connectBLE() {
+            try {
+                await activateWakeLock();
+
+                bluetoothDevice = await navigator.bluetooth.requestDevice({
+                    filters: [{ name: "m5atom_laptimer" }],
+                    optionalServices: [SERVICE_UUID]
+                });
+
+                const server = await bluetoothDevice.gatt.connect();
+                const service = await server.getPrimaryService(SERVICE_UUID);
+                rxTxCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+
+                await rxTxCharacteristic.startNotifications();
+                rxTxCharacteristic.addEventListener('characteristicvaluechanged', handleDataReceived);
+
+                document.getElementById("btn-connect").style.display = "none";
+                document.getElementById("btn-reconfig").style.display = "inline-block";
+                
+                speak("接続しました");
+                showModal();
+
+                setTimeout(requestBatteryVoltage, 500);
+
+            } catch (error) {
+                console.error(error);
+                alert("M5Atomとの接続に失敗しました。再試行してください。");
+            }
+        }
+
+
+
+        // 設定値の送信 (拡張CSV形式: "set,モード,最小幅,最大幅,バイアス幅,スライス幅,車体No")
+        async function sendConfig() {
+            if (!rxTxCharacteristic) return;
+
+            const mode = document.getElementById("set-mode").value;
+            const minW = document.getElementById("width-min").value;
+            const maxW = document.getElementById("width-max").value;
+            
+            // 💡 新設：新しく追加した3つの車体識別パラメータを読み出し
+            const biasW  = document.getElementById("bias-pulse-width").value;
+            const sliceW = document.getElementById("bit-slice-width").value;
+            const carNo  = document.getElementById("car-id-no").value;
+            
+            // 💡 将来の車体識別ロジックをにらみ、すべてのパラメータをカンマ区切りで一括射出（空送信対応）
+            const cmdStr = `set,${mode},${minW},${maxW},${biasW},${sliceW},${carNo}`;
+            const encoder = new TextEncoder();
+            await rxTxCharacteristic.writeValue(encoder.encode(cmdStr));
+            
+            await rxTxCharacteristic.writeValue(encoder.encode("PREP"));
+            
+            hideModal();
+            speak("計測開始します");
+            
+            // 計測準備に入ったタイミングから2分間隔アナウンスタイマーをキック
+            startRaceElapsedTimer();
+            isFirstData = true;
+        }
+
+        // ポップアップ最下段の「履歴削除」ボタンの独立処理
+        function footerClearHistory() {
+            clearHistory(); 
+            hideModal();    
+        }
+
+        // ポップアップ最下段の「.csv」ボタンの独立処理
+        function footerExportCSV() {
+            exportCSV(); 
+            hideModal(); 
+        }
+
+        // ATOMからデータを受信した際の解析処理（電圧表示デコード・1回受信で完全封印）
+        function handleDataReceived(event) {
+            const value = new TextDecoder().decode(event.target.value).trim();
+            console.log("Received: ", value);
+
+            if (value === "START") {
+                document.getElementById("main-time").innerText = "0.000";
+                isFirstData = false; 
+                speak("計測を開始しました");
+                return;
+            }
+
+            // 🔋 ATOMからのバッテリー電圧データ（2倍補正・最上行のミニバッジへ描画し以降は完全封印）
+            if (value.startsWith("V:")) {
+                const adcRaw = parseInt(value.substring(2));
+                if (!isNaN(adcRaw)) {
+                    const voltageMv = (adcRaw * 3120) / 4095;
+                    const voltageV = (voltageMv / 1000.0) * 2.0;
+                    
+                    const vBadge = document.getElementById("v-mini-status");
+                    vBadge.innerText = `🔋 電圧: ${voltageV.toFixed(2)} V`;
+                    vBadge.className = "voltage-mini v-active";
+                    
+                    // 💡 ノイズ完全遮断のため、1回表示されたら電圧要求処理を空関数に書き換えて永久封印
+                    requestBatteryVoltage = function() { 
+                        console.log("🔒 電圧要求はノイズ防止のため完全に封印されています"); 
+                    };
+                }
+                return; 
+            }
+
+            // 【モード1・拡張モード4〜8用データ解析】 ("L:マイクロ秒" 形式)
+            if (value.startsWith("L:")) {
+                const parts = value.split(":");
+                if (parts.length >= 2) {
+                    const micros = parseFloat(parts[1]); 
+                    if (!isNaN(micros)) {
+                        const seconds = micros / 1000000.0;
+                        processNewLapTime(seconds);
+                    }
+                }
+            }
+            // 【モード3用データ解析】 ("ID:0,T:マイクロ秒" 形式)
+            else if (value.startsWith("ID:")) {
+                const parts = value.split(","); 
+                if (parts.length >= 2) {
+                    const idPart = parts[0].split(":"); 
+                    const tPart = parts[1].split(":");  
+                    
+                    if (idPart.length >= 2 && tPart.length >= 2) {
+                        const carId = idPart[1].trim();
+                        const micros = parseFloat(tPart[1]);
+                        
+                        // 選択されている「車体識別No.」に合致するデータのみを引き抜いて画面表示
+                        const currentTargetCarNo = document.getElementById("car-id-no").value;
+                        if (!isNaN(micros) && carId === currentTargetCarNo) {
+                            const seconds = micros / 1000000.0;
+                            processNewLapTime(seconds);
+                        }
+                    }
+                }
+            }
+        }
+
+        function processNewLapTime(seconds) {
+            const mode = document.getElementById("set-mode").value;
+            
+            lapTimes.push(seconds);
+            // モード1および4〜8は3桁表示、2と3は6桁表示
+            const decimalPlaces = (mode === "1" || mode === "4" || mode === "5" || mode === "6" || mode === "7" || mode === "8") ? 3 : 6;
+            
+            document.getElementById("main-time").innerText = seconds.toFixed(decimalPlaces);
+
+            // 音声読み上げ（モード1のみ動作）
+            speak(`${lapTimes.length}ラップ、${seconds.toFixed(2)}秒`);
+
+            const sum = lapTimes.reduce((a, b) => a + b, 0);
+            const ave = sum / lapTimes.length;
+
+            const tbody = document.getElementById("stats-body");
+            const row = document.createElement("tr");
+            row.innerHTML = `
+                <td>${lapTimes.length}</td>
+                <td>${seconds.toFixed(decimalPlaces)}</td>
+                <td>${ave.toFixed(decimalPlaces)}</td>
+                <td>${sum.toFixed(decimalPlaces)}</td>
+            `;
+            tbody.insertBefore(row, tbody.firstChild); 
+        }
+
+        function clearHistory() {
+            lapTimes = [];
+            document.getElementById("stats-body").innerHTML = "";
+            const mode = document.getElementById("set-mode").value;
+            const decimalPlaces = (mode === "1" || mode === "4" || mode === "5" || mode === "6" || mode === "7" || mode === "8") ? 3 : 6;
+            document.getElementById("main-time").innerText = (decimalPlaces === 3) ? "--.---" : "--.------";
+            raceElapsedSeconds = 0; // 2分タイマー時間もクリア
+        }
+
+        function exportCSV() {
+            if (lapTimes.length === 0) return;
+            const mode = document.getElementById("set-mode").value;
+            const decimalPlaces = (mode === "1" || mode === "4" || mode === "5" || mode === "6" || mode === "7" || mode === "8") ? 3 : 6;
+            
+            let csvContent = "data:text/csv;charset=utf-8,Lap,Time\n";
+            lapTimes.forEach((t, i) => {
+                csvContent += `${i + 1},${t.toFixed(decimalPlaces)}\n`;
+            });
+
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `laptimer_data_mode${mode}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    </script>
+</body>
+</html>
